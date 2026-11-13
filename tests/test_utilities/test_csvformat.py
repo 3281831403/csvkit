@@ -2,6 +2,8 @@ import io
 import sys
 from unittest.mock import patch
 
+import agate
+
 from csvkit.utilities.csvformat import CSVFormat, launch_new_instance
 from tests.utils import CSVKitTestCase, EmptyFileTests, stdin_as_string
 
@@ -113,6 +115,46 @@ class TestCSVFormatQuoteNonNumeric(CSVKitTestCase, EmptyFileTests):
             '"a","b","c"',
             '1.7,200000000,""',
         ])
+
+    # New tests compared to TestCSVFormat: without an explicit --locale, -U 2 changes
+    # only the quoting, never the values or the shape of the rows.
+    def test_values_preserved(self):
+        self.assertLines(['-U', '2', 'examples/test_quote_nonnumeric.csv'], [
+            '"id","state","code","ratio"',
+            '1,"none",00123,1e3',
+            '2,"NULL",00456,2.5',
+            '3,"n/a",".",3',
+            '4,".",00789,4',
+        ])
+
+    def test_blank_line_preserved(self):
+        with stdin_as_string(io.BytesIO(b'a,b,c\n1,2,3\n\n4,5,6\n')):
+            self.assertLines(['-U', '2'], [
+                '"a","b","c"',
+                '1,2,3',
+                '',
+                '4,5,6',
+            ])
+
+    def test_ragged_rows_preserved(self):
+        with stdin_as_string(io.BytesIO(b'a,b,c\n1,2\n4,5,6,7\n')):
+            self.assertLines(['-U', '2'], [
+                '"a","b","c"',
+                '1,2',
+                '4,5,6,7',
+            ])
+
+    def test_same_rows_as_quote_minimal(self):
+        # Anything -U 0 can read, -U 2 must also read, row for row.
+        for path in ('examples/test_quote_nonnumeric.csv',):
+            minimal = self.get_output_as_list(['-U', '0', path])
+            nonnumeric = self.get_output_as_list(['-U', '2', path])
+            self.assertEqual(len(minimal), len(nonnumeric))
+            for min_row, nn_row in zip(minimal, nonnumeric):
+                self.assertEqual(
+                    next(agate.csv.reader([min_row])),
+                    next(agate.csv.reader([nn_row])),
+                )
 
     def test_launch_new_instance(self):
         with patch.object(sys, 'argv', [self.Utility.__name__.lower(), 'examples/dummy.csv']):

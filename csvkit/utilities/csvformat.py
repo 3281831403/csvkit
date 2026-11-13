@@ -7,6 +7,39 @@ import agate
 from csvkit.cli import QUOTING_CHOICES, CSVKitUtility, make_default_headers
 
 
+class _VerbatimNumber(float):
+    """
+    A float that stringifies to the original CSV field, so that a csv.QUOTE_NONNUMERIC
+    writer leaves the field unquoted without rewriting its value.
+    """
+
+    def __new__(cls, value):
+        self = super().__new__(cls, value)
+        self._value = value
+        return self
+
+    def __str__(self):
+        return self._value
+
+
+def _quote_nonnumeric_row(row):
+    """
+    Wrap numeric-looking fields so that a csv.QUOTE_NONNUMERIC writer quotes only the
+    other fields, while every value is written verbatim.
+    """
+    converted = []
+
+    for value in row:
+        if isinstance(value, str):
+            try:
+                value = _VerbatimNumber(value)
+            except ValueError:
+                pass
+        converted.append(value)
+
+    return converted
+
+
 class CSVFormat(CSVKitUtility):
     description = 'Convert a CSV file to a custom output format.'
     override_flags = ['I']
@@ -74,7 +107,8 @@ class CSVFormat(CSVKitUtility):
 
         writer = agate.csv.writer(self.output_file, **self.writer_kwargs)
 
-        if self.args.out_quoting == 2:
+        if self.args.out_quoting == 2 and self.args.locale is not None:
+            # With an explicit --locale, numbers are parsed and normalized to that locale.
             table = agate.Table.from_csv(
                 self.input_file,
                 skip_lines=self.args.skip_lines,
@@ -99,6 +133,10 @@ class CSVFormat(CSVKitUtility):
 
             if self.args.skip_header:
                 next(reader, None)
+
+            if self.args.out_quoting == 2:
+                # Change only the quoting: values and row shapes pass through verbatim.
+                reader = (_quote_nonnumeric_row(row) for row in reader)
 
             writer.writerows(reader)
 

@@ -208,7 +208,7 @@ class CSVKitUtility:
                 help='Specify the encoding of the input CSV file.')
         if 'L' not in self.override_flags:
             self.argparser.add_argument(
-                '-L', '--locale', dest='locale', default='en_US',
+                '-L', '--locale', dest='locale', default=None,
                 help='Specify the locale (en_US) of any formatted numbers.')
         if 'S' not in self.override_flags:
             self.argparser.add_argument(
@@ -361,7 +361,9 @@ class CSVKitUtility:
             types = [text_type]
         else:
             number_type = agate.Number(
-                locale=self.args.locale, no_leading_zeroes=getattr(self.args, 'no_leading_zeroes', None), **type_kwargs
+                locale=self.args.locale or 'en_US',
+                no_leading_zeroes=getattr(self.args, 'no_leading_zeroes', None),
+                **type_kwargs
             )
 
             if getattr(self.args, 'out_quoting', None) == 2:  # QUOTE_NONUMERIC

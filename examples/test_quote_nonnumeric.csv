@@ -1,0 +1,5 @@
+id,state,code,ratio
+1,none,00123,1e3
+2,NULL,00456,2.5
+3,n/a,.,3
+4,.,00789,4
