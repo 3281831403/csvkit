@@ -21,6 +21,21 @@ def _skip_lines(f, args):
     return skip_lines
 
 
+def _unique_column_name(name, existing):
+    """
+    Return ``name`` if it isn't already a column name, else the first available
+    ``name_2``, ``name_3``, ... so that stacked output never has duplicate headers.
+    """
+    if name not in existing:
+        return name
+
+    suffix = 2
+    while f'{name}_{suffix}' in existing:
+        suffix += 1
+
+    return f'{name}_{suffix}'
+
+
 class CSVStack(CSVKitUtility):
     description = 'Stack up the rows from multiple CSV files, optionally adding a grouping value.'
     # Override 'f' because the utility accepts multiple files.
@@ -81,7 +96,9 @@ class CSVStack(CSVKitUtility):
                             headers.append(field)
             else:
                 row = next(rows, [])
-                headers = list(make_default_headers(len(row)))
+                # Use the widest input, so that narrower rows are padded rather than shifted.
+                if len(row) > len(headers):
+                    headers = list(make_default_headers(len(row)))
                 if row:
                     rows = chain([row], rows)
 
@@ -90,11 +107,8 @@ class CSVStack(CSVKitUtility):
             else:
                 f.close()
 
-            # If we aren't using header rows, we only look at the first file and stack columns in the same order.
-            if not use_fieldnames:
-                break
-
         if has_groups:
+            group_name = _unique_column_name(group_name, headers)
             headers.insert(0, group_name)
 
         if use_fieldnames:
@@ -124,6 +138,10 @@ class CSVStack(CSVKitUtility):
                         row[group_name] = group
                     else:
                         row.insert(0, group)
+
+                if not use_fieldnames and len(row) < len(headers):
+                    # Pad rows from narrower inputs, so values land in deterministic columns.
+                    row.extend([''] * (len(headers) - len(row)))
 
                 output.writerow(row)
 

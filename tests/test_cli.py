@@ -20,6 +20,20 @@ class TestCli(unittest.TestCase):
         self.assertEqual(0, match_column_identifier(self.headers, '1'))
         self.assertEqual(1, match_column_identifier(self.headers, '1', column_offset=0))
 
+    def test_match_column_numeric_name_out_of_positional_range(self):
+        # A numeric identifier that isn't a valid position still matches an exact column name.
+        headers = ['id', 'name', '2024']
+        self.assertEqual(2, match_column_identifier(headers, '2024'))
+        self.assertEqual(2, match_column_identifier(headers, '2024', column_offset=0))
+        self.assertEqual(2, parse_column_identifiers('2024', headers)[0])
+
+    def test_match_column_numeric_name_zero(self):
+        # A column named "0" is out of range for 1-based indexing, so the name wins.
+        headers = ['0', 'name']
+        self.assertEqual(0, match_column_identifier(headers, '0'))
+        # ...but with --zero, "0" is a valid position, which takes priority.
+        self.assertEqual(0, match_column_identifier(headers, '0', column_offset=0))
+
     def test_parse_column_identifiers(self):
         self.assertEqual([2, 0, 1], parse_column_identifiers('i_work_here,1,name', self.headers))
         self.assertEqual([2, 1, 1], parse_column_identifiers('i_work_here,1,name', self.headers, column_offset=0))

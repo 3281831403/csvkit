@@ -1,6 +1,10 @@
 Unreleased
 ----------
 
+-  fix: :doc:`/scripts/csvstack` renames the grouping column (e.g. to ``group_2``) when the inputs already have a column with that name, instead of writing a duplicate header and overwriting the input's values.
+-  fix: :doc:`/scripts/csvstack` with :code:`--no-header-row` stacks inputs of unequal width: the output is as wide as the widest input, and narrower rows are padded with empty values. Previously, only the first input set the width, so wider rows were misaligned.
+-  fix: A column identifier that looks like an integer but isn't a valid position (e.g. a column named ``2024``) now matches the column name, in :doc:`/scripts/csvjoin` and other tools. Previously, :doc:`/scripts/csvjoin` reported that the column didn't exist.
+-  fix: The :code:`--encoding` option defaults to ``utf-8-sig`` and no longer follows the ``PYTHONIOENCODING`` environment variable (which configures Python's standard streams, not input files), so a byte-order mark is never treated as part of the first column name.
 -  fix: :doc:`/scripts/csvgrep` treats an empty :code:`--regex` or :code:`--match` pattern as matching every value. Previously, with an empty pattern, :code:`--any-match` matched no rows, and :code:`--any-match --invert-match` matched every row.
 -  feat: :doc:`/scripts/csvcut` adds an :code:`--ignore-unknown-columns` option to skip identifiers in :code:`-c/--columns` that do not match a column in the input.
 -  feat: :doc:`/scripts/csvclean` adds a :code:`--remove-empty-columns` option to remove empty columns from standard output.

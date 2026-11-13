@@ -1,3 +1,4 @@
+import os
 import sys
 from unittest.mock import patch
 
@@ -36,6 +37,16 @@ class TestCSVCut(CSVKitTestCase, ColumnsTests, EmptyFileTests, NamesTests):
             ['1', '3'],
             ['4', 'ʤ'],
         ])
+
+    def test_encoding_default_ignores_pythonioencoding(self):
+        # PYTHONIOENCODING configures Python's standard streams, not input files. The
+        # input encoding default stays utf-8-sig, so a BOM never pollutes column names.
+        with patch.dict(os.environ, {'PYTHONIOENCODING': 'utf-8'}):
+            self.assertRows(['-c', '1', 'examples/test_utf8_bom.csv'], [
+                ['foo'],
+                ['1'],
+                ['4'],
+            ])
 
     def test_with_gzip(self):
         self.assertRows(['-c', '1,3', 'examples/dummy.csv.gz'], [

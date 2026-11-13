@@ -134,6 +134,21 @@ class TestCSVStack(CSVKitTestCase, EmptyFileTests):
             ['dummy2.csv', '1', '2', '3'],
         ])
 
+    def test_group_column_name_collision(self):
+        # The input already has a "group" column: its values must survive, and the
+        # output headers must be unique.
+        self.assertRows(['--groups', 'x,y', 'examples/dummy_group.csv', 'examples/dummy.csv'], [
+            ['group_2', 'group', 'a', 'b', 'c'],
+            ['x', 'upstream-1', '1', '2', ''],
+            ['y', '', '1', '2', '3'],
+        ])
+
+    def test_group_name_collision_with_explicit_name(self):
+        self.assertRows(['--groups', 'x', '-n', 'a', 'examples/dummy.csv'], [
+            ['a_2', 'a', 'b', 'c'],
+            ['x', '1', '2', '3'],
+        ])
+
 
 class TestNoHeaderRow(TestCSVStack):
 
@@ -248,5 +263,29 @@ class TestNoHeaderRow(TestCSVStack):
                 ["hello", "a", "b", "c"],
                 ["no_header_row.csv", "1", "2", "3"],
                 ["no_header_row2.csv", "4", "5", "6"],
+            ],
+        )
+
+    def test_no_header_row_ragged_widths(self):
+        # The output is as wide as the widest input, and narrower rows are padded.
+        self.assertRows(['--no-header-row', 'examples/no_header_row.csv', 'examples/no_header_row_wide.csv'], [
+            ['a', 'b', 'c', 'd', 'e'],
+            ['1', '2', '3', '', ''],
+            ['7', '8', '9', '10', '11'],
+        ])
+
+        self.assertRows(['--no-header-row', 'examples/no_header_row_wide.csv', 'examples/no_header_row.csv'], [
+            ['a', 'b', 'c', 'd', 'e'],
+            ['7', '8', '9', '10', '11'],
+            ['1', '2', '3', '', ''],
+        ])
+
+    def test_no_header_row_ragged_widths_grouped(self):
+        self.assertRows(
+            ['--no-header-row', '--groups', 'x,y', 'examples/no_header_row.csv', 'examples/no_header_row_wide.csv'],
+            [
+                ['group', 'a', 'b', 'c', 'd', 'e'],
+                ['x', '1', '2', '3', '', ''],
+                ['y', '7', '8', '9', '10', '11'],
             ],
         )

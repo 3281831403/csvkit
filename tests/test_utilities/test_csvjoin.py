@@ -52,6 +52,13 @@ class TestCSVJoin(CSVKitTestCase, EmptyFileTests):
         output = self.get_output_as_io(['-c', 'a', 'examples/join_a.csv', 'examples/join_b.csv'])
         self.assertEqual(len(output.readlines()), 3)
 
+    def test_numeric_column_name(self):
+        # A join column named like a year ("2024") is a name, not a positional index.
+        self.assertRows(['--no-inference', '-c', '2024', 'examples/join_2024_a.csv', 'examples/join_2024_b.csv'], [
+            ['2024', 'val', 'val2'],
+            ['1', 'a', 'b'],
+        ])
+
     def test_left(self):
         output = self.get_output_as_io(['-c', 'a', '--left', 'examples/join_a.csv', 'examples/join_b.csv'])
         self.assertEqual(len(output.readlines()), 5)

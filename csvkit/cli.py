@@ -204,8 +204,10 @@ class CSVKitUtility:
                 help='Maximum length of a single field in the input CSV file.')
         if 'e' not in self.override_flags:
             self.argparser.add_argument(
-                '-e', '--encoding', dest='encoding', default=os.getenv('PYTHONIOENCODING', 'utf-8-sig'),
-                help='Specify the encoding of the input CSV file.')
+                '-e', '--encoding', dest='encoding', default='utf-8-sig',
+                help='Specify the encoding of the input CSV file. Defaults to utf-8-sig, independent of '
+                     'environment variables like PYTHONIOENCODING, so a leading byte-order mark is never '
+                     'treated as part of the first column name.')
         if 'L' not in self.override_flags:
             self.argparser.add_argument(
                 '-L', '--locale', dest='locale', default='en_US',
@@ -486,25 +488,34 @@ def make_default_headers(n):
 def match_column_identifier(column_names, c, column_offset=1):
     """
     Determine what column a single column id (name or index) matches in a series of column names.
-    Note that integer values are *always* treated as positional identifiers. If you happen to have
-    column names which are also integers, you must specify them using a positional index.
+    Integer values are treated as positional identifiers. However, if a string can't be interpreted
+    as a valid position (e.g. it is out of range) but exactly matches a column name — such as a
+    column named "2024" — the column name wins.
     """
     if isinstance(c, str) and not c.isdigit() and c in column_names:
         return column_names.index(c)
+
+    name = c if isinstance(c, str) else None
 
     try:
         c = int(c) - column_offset
     # Fail out if neither a column name nor an integer
     except ValueError:
+        if name is not None and name in column_names:
+            return column_names.index(name)
         raise ColumnIdentifierError("Column '%s' is invalid. It is neither an integer nor a column name. "
                                     "Column names are: %s" % (c, repr(column_names)[1:-1]))
 
     # Fail out if index is 0-based
     if c < 0:
+        if name is not None and name in column_names:
+            return column_names.index(name)
         raise ColumnIdentifierError("Column %i is invalid. Columns are 1-based." % (c + column_offset))
 
     # Fail out if index is out of range
     if c >= len(column_names):
+        if name is not None and name in column_names:
+            return column_names.index(name)
         raise ColumnIdentifierError("Column %i is invalid. The last column is '%s' at index %i." % (
             c + column_offset, column_names[-1], len(column_names) - 1 + column_offset))
 
