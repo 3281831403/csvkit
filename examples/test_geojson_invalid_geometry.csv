@@ -1,0 +1,4 @@
+name,geojson,lat,lon
+good,"{""type"": ""Point"", ""coordinates"": [102.0, 0.5]}",0.5,102.0
+bad,"{not valid json",1.0,103.0
+also_good,"{""type"": ""Point"", ""coordinates"": [104.0, 2.0]}",2.0,104.0

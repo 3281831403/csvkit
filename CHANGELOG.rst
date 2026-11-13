@@ -1,6 +1,10 @@
 Unreleased
 ----------
 
+-  fix: :doc:`/scripts/csvjson` GeoJSON output now uses the same types and omission rules as JSON output. Properties keep their inferred types (numbers stay numeric, including 0) and falsy values like 0 and the empty string are retained; only genuine nulls are omitted. Feature IDs produced by :code:`-k/--key` follow the same conversion as JSON keys.
+-  fix: :doc:`/scripts/csvjson` interprets the column indices passed to :code:`--lat`, :code:`--lon`, :code:`--type`, :code:`--geometry` and :code:`-k/--key` as 1-based by default, like the other tools, and as 0-based only with :code:`--zero`. Previously they were always treated as 0-based.
+-  fix: :doc:`/scripts/csvjson` no longer aborts the whole GeoJSON export when a :code:`--geometry` cell contains invalid JSON. The row number and column are reported to standard error, the feature's geometry is output as :code:`null`, and the export continues.
+-  fix: :doc:`/scripts/csvjson` raises a "Value ... is not unique in the key column." error on duplicate GeoJSON feature IDs from :code:`-k/--key`, matching the existing behavior of keyed JSON output, instead of silently emitting duplicate IDs.
 -  fix: :doc:`/scripts/csvgrep` treats an empty :code:`--regex` or :code:`--match` pattern as matching every value. Previously, with an empty pattern, :code:`--any-match` matched no rows, and :code:`--any-match --invert-match` matched every row.
 -  feat: :doc:`/scripts/csvcut` adds an :code:`--ignore-unknown-columns` option to skip identifiers in :code:`-c/--columns` that do not match a column in the input.
 -  feat: :doc:`/scripts/csvclean` adds a :code:`--remove-empty-columns` option to remove empty columns from standard output.

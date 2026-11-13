@@ -65,14 +65,18 @@ optional arguments:
                         is used as the GeoJSON Feature ID.
   \-\-lat LAT             A column index or name containing a latitude. Output
                         will be GeoJSON instead of JSON. Requires \-\-lon.
+                        Column indices are 1\-based, or 0\-based with \-\-zero.
   \-\-lon LON             A column index or name containing a longitude. Output
                         will be GeoJSON instead of JSON. Requires \-\-lat.
+                        Column indices are 1\-based, or 0\-based with \-\-zero.
   \-\-type TYPE           A column index or name containing a GeoJSON type.
                         Output will be GeoJSON instead of JSON. Requires \-\-lat
                         and \-\-lon.
   \-\-geometry GEOMETRY   A column index or name containing a GeoJSON geometry.
                         Output will be GeoJSON instead of JSON. Requires \-\-lat
-                        and \-\-lon.
+                        and \-\-lon. A cell that is not valid JSON is reported to
+                        standard error with its row number; the feature is still
+                        output with a null geometry.
   \-\-crs CRS             A coordinate reference system string to be included
                         with GeoJSON output. Requires \-\-lat and \-\-lon.
   \-\-no\-bbox             Disable the calculation of a bounding box.

@@ -3,6 +3,7 @@
 import json
 import sys
 from collections import OrderedDict
+from decimal import Decimal
 
 import agate
 
@@ -23,11 +24,11 @@ class CSVJSON(CSVKitUtility):
         self.argparser.add_argument(
             '--lat', dest='lat',
             help='A column index or name containing a latitude. Output will be GeoJSON instead of JSON. '
-                 'Requires --lon.')
+                 'Requires --lon. Column indices are 1-based, or 0-based with --zero.')
         self.argparser.add_argument(
             '--lon', dest='lon',
             help='A column index or name containing a longitude. Output will be GeoJSON instead of JSON. '
-                 'Requires --lat.')
+                 'Requires --lat. Column indices are 1-based, or 0-based with --zero.')
         self.argparser.add_argument(
             '--type', dest='type',
             help='A column index or name containing a GeoJSON type. Output will be GeoJSON instead of JSON. '
@@ -131,11 +132,11 @@ class CSVJSON(CSVKitUtility):
 
     def output_geojson(self):
         table = self.read_csv_to_table()
-        geojson_generator = self.GeoJsonGenerator(self.args, table.column_names)
+        geojson_generator = self.GeoJsonGenerator(self.args, table.column_names, table.column_types)
 
         if self.args.streamOutput:
-            for row in table.rows:
-                self.dump_json(geojson_generator.feature_for_row(row), newline=True)
+            for line_number, row in enumerate(table.rows, start=1):
+                self.dump_json(geojson_generator.feature_for_row(row, line_number), newline=True)
         else:
             self.dump_json(geojson_generator.generate_feature_collection(table))
 
@@ -157,39 +158,47 @@ class CSVJSON(CSVKitUtility):
         column_names = next(rows)
         geojson_generator = self.GeoJsonGenerator(self.args, column_names)
 
-        for row in rows:
-            self.dump_json(geojson_generator.feature_for_row(row), newline=True)
+        for line_number, row in enumerate(rows, start=1):
+            self.dump_json(geojson_generator.feature_for_row(row, line_number), newline=True)
 
     class GeoJsonGenerator:
-        def __init__(self, args, column_names):
+        def __init__(self, args, column_names, column_types=None):
             self.args = args
             self.column_names = column_names
+            # In streaming mode every value is a raw string, so no type-specific conversion is needed.
+            self.json_funcs = [column_type.jsonify for column_type in column_types] if column_types else []
 
-            self.lat_column = match_column_identifier(column_names, self.args.lat, self.args.zero_based)
+            column_offset = 1
+            if getattr(args, 'zero_based', False):
+                column_offset = 0
 
-            self.lon_column = match_column_identifier(column_names, self.args.lon, self.args.zero_based)
+            self.lat_column = match_column_identifier(column_names, self.args.lat, column_offset)
+
+            self.lon_column = match_column_identifier(column_names, self.args.lon, column_offset)
 
             if self.args.type:
-                self.type_column = match_column_identifier(column_names, self.args.type, self.args.zero_based)
+                self.type_column = match_column_identifier(column_names, self.args.type, column_offset)
             else:
                 self.type_column = None
 
             if self.args.geometry:
-                self.geometry_column = match_column_identifier(column_names, self.args.geometry, self.args.zero_based)
+                self.geometry_column = match_column_identifier(column_names, self.args.geometry, column_offset)
             else:
                 self.geometry_column = None
 
             if self.args.key:
-                self.id_column = match_column_identifier(column_names, self.args.key, self.args.zero_based)
+                self.id_column = match_column_identifier(column_names, self.args.key, column_offset)
             else:
                 self.id_column = None
+
+            self.seen_ids = set()
 
         def generate_feature_collection(self, table):
             features = []
             bounds = self.GeoJsonBounds()
 
-            for row in table.rows:
-                feature = self.feature_for_row(row)
+            for line_number, row in enumerate(table.rows, start=1):
+                feature = self.feature_for_row(row, line_number)
 
                 if not self.args.no_bbox:
                     bounds.add_feature(feature)
@@ -214,7 +223,25 @@ class CSVJSON(CSVKitUtility):
 
             return OrderedDict(items)
 
-        def feature_for_row(self, row):
+        def value_for_column(self, value, index):
+            """
+            Convert a row value the same way plain JSON output does, so that GeoJSON shares its
+            typing rules: numbers stay numeric (including 0), dates are ISO strings, and only
+            genuine nulls become ``None``.
+            """
+            if self.json_funcs:
+                return self.json_funcs[index](value)
+            return value
+
+        def feature_id(self, value):
+            """
+            Match the key conversion used by agate's plain JSON ``key`` output.
+            """
+            if isinstance(value, Decimal):
+                return str(value.normalize())
+            return value
+
+        def feature_for_row(self, row, line_number=None):
             feature = OrderedDict([
                 ('type', 'Feature'),
                 ('properties', OrderedDict()),
@@ -222,23 +249,49 @@ class CSVJSON(CSVKitUtility):
 
             for i, c in enumerate(row):
                 # Prevent "type" or geo fields from being added to properties.
-                if c is None or i in (self.type_column, self.lat_column, self.lon_column, self.geometry_column):
+                if i in (self.type_column, self.lat_column, self.lon_column, self.geometry_column):
                     continue
-                if i == self.id_column:
-                    feature['id'] = c
-                elif c:
-                    feature['properties'][self.column_names[i]] = c
 
-            feature['geometry'] = self.geometry_for_row(row)
+                value = self.value_for_column(c, i)
+
+                if i == self.id_column:
+                    # Only genuine nulls are omitted, so an empty-string id is still set.
+                    if c is not None:
+                        # Use the raw cell value, so Decimal ids follow agate's key conversion
+                        # (e.g. Decimal('1.0') becomes "1"), rather than jsonify's float output.
+                        feature_id = self.feature_id(c)
+                        self.check_unique_id(feature_id)
+                        feature['id'] = feature_id
+                elif c is not None:
+                    # Keep 0, False and the empty string; omit only genuine nulls.
+                    feature['properties'][self.column_names[i]] = value
+
+            feature['geometry'] = self.geometry_for_row(row, line_number)
 
             return feature
 
-        def geometry_for_row(self, row):
+        def check_unique_id(self, feature_id):
+            # agate's plain JSON -k output rejects duplicate keys with this message.
+            key = str(feature_id)
+            if key in self.seen_ids:
+                raise ValueError('Value %s is not unique in the key column.' % key)
+            self.seen_ids.add(key)
+
+        def geometry_for_row(self, row, line_number=None):
             lat = None
             lon = None
 
             if self.geometry_column is not None:
-                return json.loads(row[self.geometry_column])
+                geometry = row[self.geometry_column]
+                if geometry is None or geometry == '':
+                    return None
+                try:
+                    return json.loads(geometry)
+                except json.JSONDecodeError as e:
+                    sys.stderr.write(
+                        'Row %i has invalid GeoJSON in column "%s": %s\n'
+                        % (line_number, self.column_names[self.geometry_column], e.msg))
+                    return None
 
             if self.lat_column is not None and self.lon_column is not None:
                 try:
