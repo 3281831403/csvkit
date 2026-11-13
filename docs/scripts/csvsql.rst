@@ -62,7 +62,10 @@ Generate SQL statements for a CSV file or execute those statements directly on a
                            insert, and --after-insert.
      --tables TABLE_NAMES  A comma-separated list of names of tables to be
                            created. By default, the tables will be named after
-                           the filenames without extensions or "stdin".
+                           the filenames without extensions or "stdin". If a
+                           single name is given, all input files are loaded into
+                           that one table. Otherwise, one name per input file is
+                           required.
      --no-constraints      Generate a schema without length limits or null
                            checks. Useful when sampling big tables.
      --unique-constraint UNIQUE_CONSTRAINT

@@ -18,6 +18,7 @@ Unreleased
 -  fix: :doc:`/scripts/csvstat`, when using :code:`--decimal-format` without decimal places (e.g. :code:`%.0f`), no longer strips trailing zeros (e.g. 100 was output as 1).
 -  fix: :doc:`/scripts/csvstat`, in locales that use a decimal comma (e.g. :code:`de_DE`), no longer appends a decimal separator to whole numbers.
 -  fix: :doc:`/scripts/csvgrep` :code:`-f/--file` strips only line separators from each line of the file, as documented, not trailing whitespace.
+-  fix: :doc:`/scripts/csvsql` :code:`--insert` loads a batch of input files reliably. A single :code:`--tables` name now applies to every input file instead of only the first, and a name count that doesn't match the input count is an error. Column names that differ only in case, and shards whose column names or order differ, now fail before any database write with a message naming the file and column(s), giving the same result for every :code:`--dialect`. Shards may still use different value types for the same column; a value the database cannot store fails the whole batch. A failed batch is rolled back and removes any table it created or replaced (including in a non-default :code:`--db-schema`), so it leaves neither rows nor an empty table and can be rerun.
 
 2.2.0 - December 15, 2025
 -------------------------

@@ -41,3 +41,20 @@ class RequiredHeaderError(CustomException):
     Exception raised when an operation requires a CSV file to have a header row.
     """
     pass
+
+
+class DuplicateColumnError(CustomException):
+    """
+    Exception raised when a CSV file contains column names that are not distinct,
+    including names that differ only in case (which collide in case-insensitive
+    databases such as SQLite).
+    """
+    pass
+
+
+class SchemaMismatchError(CustomException):
+    """
+    Exception raised when multiple CSV files are loaded into the same table but
+    do not share an identical column layout.
+    """
+    pass

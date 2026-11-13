@@ -1,12 +1,15 @@
 import io
 import os
+import sqlite3
 import sys
 import unittest
+from contextlib import redirect_stderr
 from textwrap import dedent
 from unittest.mock import patch
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from csvkit.exceptions import DuplicateColumnError, SchemaMismatchError
 from csvkit.utilities.csvsql import CSVSQL, launch_new_instance
 from csvkit.utilities.sql2csv import SQL2CSV
 from tests.utils import CSVKitTestCase, EmptyFileTests, stdin_as_string
@@ -276,3 +279,167 @@ class TestCSVSQL(CSVKitTestCase, EmptyFileTests):
         self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'foo', 'examples/foo1.csv'])
         self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables',
                         'foo', 'examples/foo2.csv', '--create-if-not-exists'])
+
+    def _table_names(self):
+        connection = sqlite3.connect(self.db_file)
+        try:
+            return [row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+        finally:
+            connection.close()
+
+    def _table_rows(self, table_name):
+        connection = sqlite3.connect(self.db_file)
+        try:
+            return list(connection.execute(f'SELECT * FROM {table_name}'))
+        finally:
+            connection.close()
+
+    def _table_columns(self, table_name):
+        connection = sqlite3.connect(self.db_file)
+        try:
+            return [row[1] for row in connection.execute(f'PRAGMA table_info({table_name})')]
+        finally:
+            connection.close()
+
+    def test_single_table_name_loads_all_shards_into_one_table(self):
+        self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                         'examples/batch_shard_a.csv', 'examples/batch_shard_b.csv'])
+
+        self.assertEqual(self._table_names(), ['batched'])
+        self.assertEqual(self._table_columns('batched'), ['id', 'amount'])
+        self.assertEqual(self._table_rows('batched'),
+                         [(1.0, 10.0), (2.0, 20.0), (3.0, 30.0), (4.0, 40.0)])
+
+    def test_single_table_name_ddl_emits_one_create_statement(self):
+        sql = self.get_output(['--tables', 'batched',
+                               'examples/batch_shard_a.csv', 'examples/batch_shard_b.csv'])
+
+        self.assertEqual(sql.count('CREATE TABLE batched'), 1)
+
+    def test_table_name_count_mismatch_is_an_error(self):
+        output = io.StringIO()
+        error = io.StringIO()
+        utility = CSVSQL(['--tables', 'a,b', 'examples/batch_shard_a.csv'], output_file=output, error_file=error)
+        with redirect_stderr(error), self.assertRaises(SystemExit) as e:
+            utility.run()
+        self.assertEqual(e.exception.code, 2)
+        self.assertIn('one name per input file', error.getvalue())
+        output.close()
+
+    def test_case_only_duplicate_column_fails_before_writing(self):
+        with self.assertRaises(DuplicateColumnError) as context:
+            self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                             'examples/batch_case_dup.csv'])
+
+        message = str(context.exception)
+        self.assertIn('examples/batch_case_dup.csv', message)
+        self.assertIn("'amount'", message)
+        self.assertIn("'Amount'", message)
+        # Nothing was created, so the failed run is directly rerunnable.
+        self.assertEqual(self._table_names(), [])
+
+    def test_case_only_duplicate_column_is_dialect_independent(self):
+        for dialect in ('sqlite', 'postgresql', 'mysql'):
+            with self.subTest(dialect=dialect):
+                with self.assertRaises(DuplicateColumnError) as context:
+                    self.get_output(['--dialect', dialect, '--tables', 'batched',
+                                     'examples/batch_case_dup.csv'])
+                self.assertIn('examples/batch_case_dup.csv', str(context.exception))
+
+    def test_case_only_duplicate_column_in_batch_is_all_or_nothing(self):
+        with self.assertRaises(DuplicateColumnError):
+            self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                             'examples/batch_shard_a.csv', 'examples/batch_case_dup.csv'])
+
+        # The whole batch is rolled back: no table and no rows remain.
+        self.assertEqual(self._table_names(), [])
+
+        # The same command shape succeeds once the offending shard is removed.
+        self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                         'examples/batch_shard_a.csv', 'examples/batch_shard_b.csv'])
+        self.assertEqual(len(self._table_rows('batched')), 4)
+
+    def test_schema_drift_between_shards_fails_cleanly_and_reruns(self):
+        with self.assertRaises(SchemaMismatchError) as context:
+            self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                             'examples/batch_shard_a.csv', 'examples/batch_schema_drift.csv'])
+
+        message = str(context.exception)
+        self.assertIn('examples/batch_schema_drift.csv', message)
+        self.assertIn("'extra'", message)
+        self.assertEqual(self._table_names(), [])
+
+        # A conforming rerun against the same database file works without "table already exists".
+        self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                         'examples/batch_shard_a.csv', 'examples/batch_shard_b.csv'])
+        self.assertEqual(len(self._table_rows('batched')), 4)
+
+    def test_failed_batch_preserves_preexisting_table(self):
+        connection = sqlite3.connect(self.db_file)
+        connection.execute('CREATE TABLE keepme (x INTEGER)')
+        connection.execute('INSERT INTO keepme VALUES (99)')
+        connection.commit()
+        connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                             '--unique-constraint', 'id',
+                             'examples/batch_shard_a.csv', 'examples/batch_shard_unique.csv'])
+
+        self.assertEqual(self._table_names(), ['keepme'])
+        self.assertEqual(self._table_rows('keepme'), [(99,)])
+
+    def test_multiple_table_names_still_create_separate_tables(self):
+        self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'one,two',
+                         'examples/batch_shard_a.csv', 'examples/batch_shard_b.csv'])
+
+        self.assertEqual(self._table_names(), ['one', 'two'])
+        self.assertEqual(len(self._table_rows('one')), 2)
+        self.assertEqual(len(self._table_rows('two')), 2)
+
+    def test_heterogeneous_inferred_types_are_allowed(self):
+        # The "id" column is numeric in one shard and text in another. Only the
+        # column layout is validated; the database stores the values as-is.
+        self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                         'examples/batch_shard_a.csv', 'examples/batch_shard_text_id.csv'])
+
+        self.assertEqual(self._table_rows('batched'),
+                         [(1.0, 10.0), (2.0, 20.0), ('abc', 20.0)])
+
+    def test_overwrite_failure_drops_the_replaced_table(self):
+        connection = sqlite3.connect(self.db_file)
+        connection.execute('CREATE TABLE batched (id INTEGER, amount REAL)')
+        connection.execute('INSERT INTO batched VALUES (77, 7.7)')
+        connection.commit()
+        connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--tables', 'batched',
+                             '--overwrite', '--unique-constraint', 'id',
+                             'examples/batch_shard_a.csv', 'examples/batch_shard_unique.csv'])
+
+        # The replaced table is removed on failure, leaving no empty table behind.
+        self.assertEqual(self._table_names(), [])
+
+    def test_failed_batch_in_named_schema_is_cleaned_up(self):
+        connection = sqlite3.connect(self.db_file)
+        auxiliary = self.db_file + '.aux'
+        connection.execute(f"ATTACH DATABASE '{auxiliary}' AS mys")
+        connection.commit()
+        connection.close()
+
+        with self.assertRaises(IntegrityError):
+            self.get_output(['--db', 'sqlite:///' + self.db_file, '--insert', '--db-schema', 'mys',
+                             '--tables', 'batched',
+                             '--before-insert', f"ATTACH DATABASE '{auxiliary}' AS mys",
+                             '--unique-constraint', 'id', 'examples/batch_shard_unique.csv'])
+
+        connection = sqlite3.connect(self.db_file)
+        connection.execute(f"ATTACH DATABASE '{auxiliary}' AS mys")
+        names = [row[0] for row in connection.execute(
+            "SELECT name FROM mys.sqlite_master WHERE type='table'")]
+        connection.close()
+        self.addCleanup(lambda: os.path.exists(auxiliary) and os.remove(auxiliary))
+        self.assertEqual(names, [])
+
