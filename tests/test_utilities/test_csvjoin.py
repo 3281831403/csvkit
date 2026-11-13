@@ -119,3 +119,96 @@ class TestCSVJoin(CSVKitTestCase, EmptyFileTests):
             ['2', 'b', 'c', ''],
             ['3', 'b', 'c', ''],
         ])
+
+    def test_inner_mixed_types(self):
+        # The right join column is inferred as Text because of "unknown", but
+        # equal-looking keys must still match.
+        self.assertRows(['-c', 'id', 'examples/join_mixed_types_a.csv', 'examples/join_mixed_types_b.csv'], [
+            ['id', 'amount', 'label'],
+            ['10', '100', 'a'],
+            ['20', '200', 'b'],
+        ])
+
+    def test_left_mixed_types(self):
+        self.assertRows(
+            ['-c', 'id', '--left', 'examples/join_mixed_types_a.csv', 'examples/join_mixed_types_b.csv'],
+            [
+                ['id', 'amount', 'label'],
+                ['10', '100', 'a'],
+                ['20', '200', 'b'],
+                ['30', '300', ''],
+            ],
+        )
+
+    def test_right_mixed_types(self):
+        self.assertRows(
+            ['-c', 'id', '--right', 'examples/join_mixed_types_a.csv', 'examples/join_mixed_types_b.csv'],
+            [
+                ['id', 'label', 'amount'],
+                ['10', 'a', '100'],
+                ['20', 'b', '200'],
+                ['unknown', 'x', ''],
+            ],
+        )
+
+    def test_outer_mixed_types(self):
+        # Keys that only exist in the right table must not become empty.
+        self.assertRows(
+            ['-c', 'id', '--outer', 'examples/join_mixed_types_a.csv', 'examples/join_mixed_types_b.csv'],
+            [
+                ['id', 'amount', 'id2', 'label'],
+                ['10', '100', '10', 'a'],
+                ['20', '200', '20', 'b'],
+                ['30', '300', '', ''],
+                ['unknown', '', 'unknown', 'x'],
+            ],
+        )
+
+    def test_inner_mixed_types_three_files(self):
+        self.assertRows(
+            [
+                '-c', 'id',
+                'examples/join_mixed_types_a.csv',
+                'examples/join_mixed_types_b.csv',
+                'examples/join_mixed_types_c.csv',
+            ],
+            [
+                ['id', 'amount', 'label', 'extra'],
+                ['10', '100', 'a', 'A'],
+            ],
+        )
+
+    def test_left_mixed_types_three_files(self):
+        self.assertRows(
+            [
+                '-c', 'id', '--left',
+                'examples/join_mixed_types_a.csv',
+                'examples/join_mixed_types_b.csv',
+                'examples/join_mixed_types_c.csv',
+            ],
+            [
+                ['id', 'amount', 'label', 'extra'],
+                ['10', '100', 'a', 'A'],
+                ['20', '200', 'b', ''],
+                ['30', '300', '', 'C'],
+            ],
+        )
+
+    def test_outer_mixed_types_three_files(self):
+        # Chained outer joins: every shard's keys must survive in the key column.
+        self.assertRows(
+            [
+                '-c', 'id', '--outer',
+                'examples/join_mixed_types_a.csv',
+                'examples/join_mixed_types_b.csv',
+                'examples/join_mixed_types_c.csv',
+            ],
+            [
+                ['id', 'amount', 'id2', 'label', 'id2_2', 'extra'],
+                ['10', '100', '10', 'a', '10', 'A'],
+                ['20', '200', '20', 'b', '', ''],
+                ['30', '300', '', '', '30', 'C'],
+                ['unknown', '', 'unknown', 'x', '', ''],
+                ['40', '', '', '', '40', 'D'],
+            ],
+        )

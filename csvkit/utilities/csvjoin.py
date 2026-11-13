@@ -1,10 +1,39 @@
 #!/usr/bin/env python
 
+import datetime
 import sys
 
 import agate
 
 from csvkit.cli import CSVKitUtility, isatty, match_column_identifier
+
+
+def _normalize_join_key(value):
+    """
+    Normalize a join key so that values compare equal across differing inferred
+    column types, e.g. the number 10 and the text "10".
+    """
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    return str(value)
+
+
+def _join_key_function(column_index, normalize):
+    """
+    Create a join key function reading the column at the given index. Keys are
+    normalized only when the two join columns were inferred as different types,
+    so that same-type joins keep their exact existing behavior.
+    """
+    if normalize:
+        def join_key(row):
+            return _normalize_join_key(row[column_index])
+    else:
+        def join_key(row):
+            return row[column_index]
+
+    return join_key
 
 
 class CSVJoin(CSVKitUtility):
@@ -92,7 +121,7 @@ class CSVJoin(CSVKitUtility):
         if self.args.left_join:
             # Left outer join
             for i, table in enumerate(tables[1:]):
-                jointab = agate.Table.join(jointab, table, join_column_ids[0], join_column_ids[i + 1])
+                jointab = self._join_tables(jointab, table, join_column_ids[0], join_column_ids[i + 1])
         elif self.args.right_join:
             # Right outer join
             jointab = tables[-1]
@@ -101,21 +130,62 @@ class CSVJoin(CSVKitUtility):
             remaining_tables.reverse()
 
             for i, table in enumerate(remaining_tables):
-                jointab = agate.Table.join(jointab, table, join_column_ids[-1], join_column_ids[-(i + 2)])
+                jointab = self._join_tables(jointab, table, join_column_ids[-1], join_column_ids[-(i + 2)])
         elif self.args.outer_join:
             # Full outer join
             for i, table in enumerate(tables[1:]):
-                jointab = agate.Table.join(jointab, table, join_column_ids[0], join_column_ids[i + 1], full_outer=True)
+                jointab = self._join_tables(
+                    jointab, table, join_column_ids[0], join_column_ids[i + 1], full_outer=True)
         elif self.args.columns:
             # Inner join
             for i, table in enumerate(tables[1:]):
-                jointab = agate.Table.join(jointab, table, join_column_ids[0], join_column_ids[i + 1], inner=True)
+                jointab = self._join_tables(jointab, table, join_column_ids[0], join_column_ids[i + 1], inner=True)
         else:
             # Sequential join
             for table in tables[1:]:
                 jointab = agate.Table.join(jointab, table, full_outer=True)
 
         jointab.to_csv(self.output_file, **self.writer_kwargs)
+
+    def _join_tables(self, left_table, right_table, left_column, right_column, inner=False, full_outer=False):
+        """
+        Join two tables on the columns at the given indices.
+
+        If the two join columns were inferred as different types (e.g. one is
+        numeric and the other contains non-numeric values), their keys are
+        compared as strings so that equal-looking values still match. The
+        columns themselves keep their inferred types in the output.
+        """
+        normalize = type(left_table.column_types[left_column]) is not type(right_table.column_types[right_column])
+        left_key = _join_key_function(left_column, normalize)
+        right_key = _join_key_function(right_column, normalize)
+
+        if full_outer:
+            # In the output of a full outer join, the right table's columns
+            # follow the left table's columns in order.
+            right_key_column = len(left_table.column_names) + right_column
+            joined = agate.Table.join(left_table, right_table, left_key, right_key, full_outer=True)
+
+            # agate leaves the left join column empty for rows that only exist
+            # in the right table. Fill it with the right join column's value so
+            # that every output row carries its join key.
+            rows = []
+
+            for row in joined.rows:
+                row = list(row)
+
+                if row[left_column] is None and row[right_key_column] is not None:
+                    row[left_column] = row[right_key_column]
+
+                rows.append(row)
+
+            return joined._fork(rows)
+
+        # Exclude the right join column from the output, as agate does when
+        # joining on column names.
+        columns = [name for i, name in enumerate(right_table.column_names) if i != right_column]
+
+        return agate.Table.join(left_table, right_table, left_key, right_key, inner=inner, columns=columns)
 
     def _parse_join_column_names(self, join_string):
         """
